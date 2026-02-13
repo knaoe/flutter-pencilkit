@@ -48,7 +48,23 @@ class FLPencilKit: NSObject, FlutterPlatformView {
       binaryMessenger: messenger!
     )
     if #available(iOS 13.0, *) {
-      _view = PencilKitView(frame: frame, methodChannel: methodChannel)
+      let aspectRatio: CGFloat
+      var backgroundImage: UIImage?
+      if let argsDict = args as? [String: Any] {
+        aspectRatio = (argsDict["aspectRatio"] as? Double)
+          .map { CGFloat($0) } ?? 1.0
+        if let imageData = argsDict["imageData"] as? FlutterStandardTypedData {
+          backgroundImage = UIImage(data: imageData.data)
+        }
+      } else {
+        aspectRatio = 1.0
+      }
+      _view = PencilKitView(
+        frame: frame,
+        methodChannel: methodChannel,
+        aspectRatio: aspectRatio,
+        backgroundImage: backgroundImage
+      )
     } else {
       _view = UIView(frame: frame)
     }
@@ -184,10 +200,16 @@ class FLPencilKit: NSObject, FlutterPlatformView {
 @available(iOS 13.0, *)
 private func createCanvasView(delegate: PKCanvasViewDelegate) -> PKCanvasView {
   let v = PKCanvasView()
-  v.translatesAutoresizingMaskIntoConstraints = false
   v.drawing = PKDrawing()
   v.delegate = delegate
   v.alwaysBounceVertical = false
+  v.alwaysBounceHorizontal = false
+  v.isScrollEnabled = false
+  v.showsVerticalScrollIndicator = false
+  v.showsHorizontalScrollIndicator = false
+  v.minimumZoomScale = 1.0
+  v.maximumZoomScale = 1.0
+  v.contentInsetAdjustmentBehavior = .never
   if #unavailable(iOS 14.0) {
     v.allowsFingerDrawing = true
   }
@@ -215,6 +237,8 @@ private class PencilKitView: UIView {
   }
 
   private let channel: FlutterMethodChannel
+  private let canonicalSize: CGSize
+  private let backgroundImageView: UIImageView
 
   @available(*, unavailable)
   required init?(coder: NSCoder) {
@@ -225,26 +249,60 @@ private class PencilKitView: UIView {
     fatalError("Not Implemented")
   }
 
-  init(frame: CGRect, methodChannel: FlutterMethodChannel) {
+  init(
+    frame: CGRect,
+    methodChannel: FlutterMethodChannel,
+    aspectRatio: CGFloat,
+    backgroundImage: UIImage?
+  ) {
+    let w: CGFloat = 1024
+    canonicalSize = CGSize(width: w, height: w / max(aspectRatio, 0.01))
     channel = methodChannel
+
+    backgroundImageView = UIImageView(image: backgroundImage)
+    backgroundImageView.contentMode = .scaleToFill
+    backgroundImageView.isUserInteractionEnabled = false
+
     super.init(frame: frame)
 
-    // layout
-    layoutCanvasView()
+    addSubview(backgroundImageView)
+    addAndPositionCanvasView()
 
     toolPicker?.addObserver(canvasView)
     toolPicker?.addObserver(self)
     toolPicker?.setVisible(true, forFirstResponder: canvasView)
   }
 
-  private func layoutCanvasView() {
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    applyTransforms()
+  }
+
+  private func applyTransforms() {
+    let containerSize = bounds.size
+    guard containerSize.width > 0, containerSize.height > 0 else { return }
+    let scale = containerSize.width / canonicalSize.width
+
+    backgroundImageView.transform = .identity
+    backgroundImageView.bounds = CGRect(origin: .zero, size: canonicalSize)
+    backgroundImageView.center = CGPoint(
+      x: containerSize.width / 2,
+      y: containerSize.height / 2
+    )
+    backgroundImageView.transform = CGAffineTransform(scaleX: scale, y: scale)
+
+    canvasView.transform = .identity
+    canvasView.bounds = CGRect(origin: .zero, size: canonicalSize)
+    canvasView.center = CGPoint(
+      x: containerSize.width / 2,
+      y: containerSize.height / 2
+    )
+    canvasView.transform = CGAffineTransform(scaleX: scale, y: scale)
+  }
+
+  private func addAndPositionCanvasView() {
     addSubview(canvasView)
-    NSLayoutConstraint.activate([
-      canvasView.widthAnchor.constraint(equalTo: widthAnchor),
-      canvasView.heightAnchor.constraint(equalTo: heightAnchor),
-      canvasView.centerXAnchor.constraint(equalTo: centerXAnchor),
-      canvasView.centerYAnchor.constraint(equalTo: centerYAnchor)
-    ])
+    applyTransforms()
   }
 
   deinit {
@@ -353,7 +411,7 @@ private class PencilKitView: UIView {
     canvasView.removeFromSuperview()
     synchronizeCanvasViewProperties(old: canvasView, new: newCanvasView)
     canvasView = newCanvasView
-    layoutCanvasView()
+    addAndPositionCanvasView()
 
     if withBase64Data {
       return drawing.dataRepresentation().base64EncodedString()
@@ -366,12 +424,18 @@ private class PencilKitView: UIView {
   }
 
   func getBase64PngData(scale: Double) -> String? {
-    let image = canvasView.drawing.image(from: canvasView.bounds, scale: scale)
+    let image = canvasView.drawing.image(
+      from: CGRect(origin: .zero, size: canonicalSize),
+      scale: scale
+    )
     return image.pngData()?.base64EncodedString()
   }
 
   func getBase64JpegData(scale: Double, compression: Double) -> String? {
-    let image = canvasView.drawing.image(from: canvasView.bounds, scale: scale)
+    let image = canvasView.drawing.image(
+      from: CGRect(origin: .zero, size: canonicalSize),
+      scale: scale
+    )
     return image.jpegData(compressionQuality: compression)?.base64EncodedString()
   }
 
@@ -384,7 +448,7 @@ private class PencilKitView: UIView {
     canvasView.removeFromSuperview()
     synchronizeCanvasViewProperties(old: canvasView, new: newCanvasView)
     canvasView = newCanvasView
-    layoutCanvasView()
+    addAndPositionCanvasView()
   }
 
   func applyProperties(properties: [String: Any?]) {
