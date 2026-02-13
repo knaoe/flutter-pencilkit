@@ -70,6 +70,8 @@ enum PencilKitIos14DrawingPolicy {
 class PencilKit extends StatefulWidget {
   const PencilKit({
     super.key,
+    this.aspectRatio,
+    this.imageData,
     this.hitTestBehavior,
     this.onPencilKitViewCreated,
     this.unAvailableFallback,
@@ -88,6 +90,20 @@ class PencilKit extends StatefulWidget {
     this.canvasViewDrawingDidChange,
     this.canvasViewDidFinishRendering,
   });
+
+  /// Aspect ratio (width / height) of the content.
+  ///
+  /// Used to compute a fixed canonical canvas size on the native side.
+  /// The canvas always draws in canonical coordinates and is displayed via
+  /// UIView.transform, so PKDrawing coordinates never change on resize/rotate.
+  final double? aspectRatio;
+
+  /// Background image bytes displayed behind the canvas on the native side.
+  ///
+  /// Placing the image in native UIKit ensures it shares the same
+  /// UIView.transform as the PKCanvasView, keeping strokes aligned with
+  /// the background at all times (including rotation and resize).
+  final Uint8List? imageData;
 
   /// {@macro flutter.widgets.AndroidView.hitTestBehavior}
   final PlatformViewHitTestBehavior? hitTestBehavior;
@@ -118,7 +134,7 @@ class PencilKit extends StatefulWidget {
   /// You should always set the value of this property to false if the view is fully or partially transparent.
   final bool? isOpaque;
 
-  /// The view’s background color. The default is transparent
+  /// The view's background color. The default is transparent
   final Color? backgroundColor;
 
   /// Tells the delegate that the tool picker UI changed visibility.
@@ -216,6 +232,10 @@ class _PencilKitState extends State<PencilKit> {
     if (_isAvailable) {
       return UiKitView(
         viewType: 'plugins.mjstudio/flutter_pencil_kit',
+        creationParams: <String, Object>{
+          'aspectRatio': widget.aspectRatio ?? 1.0,
+          if (widget.imageData != null) 'imageData': widget.imageData!,
+        },
         creationParamsCodec: const StandardMessageCodec(),
         onPlatformViewCreated: _onPencilKitPlatformViewCreated,
         hitTestBehavior:
