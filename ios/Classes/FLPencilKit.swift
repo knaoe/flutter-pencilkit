@@ -489,6 +489,11 @@ private class PencilKitView: UIView {
     if let backgroundColor = properties["backgroundColor"] as? Int {
       canvasView.backgroundColor = UIColor(hex: backgroundColor)
     }
+    if let userInterfaceStyle = properties["userInterfaceStyle"] as? Int {
+      canvasView.overrideUserInterfaceStyle = UIUserInterfaceStyle(
+        rawValue: userInterfaceStyle
+      ) ?? .unspecified
+    }
   }
 
   private func synchronizeCanvasViewProperties(old: PKCanvasView, new: PKCanvasView) {
@@ -506,6 +511,7 @@ private class PencilKitView: UIView {
     }
     new.isOpaque = old.isOpaque
     new.backgroundColor = old.backgroundColor
+    new.overrideUserInterfaceStyle = old.overrideUserInterfaceStyle
 
     if toolPicker?.isVisible == true {
       new.becomeFirstResponder()
