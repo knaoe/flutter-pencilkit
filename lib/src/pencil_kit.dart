@@ -8,8 +8,8 @@ import '../pencil_kit.dart';
 
 /// Optional callback invoked when a web view is first created. [controller] is
 /// the [PencilKitController] for the created pencil kit view.
-typedef PencilKitViewCreatedCallback = void Function(
-    PencilKitController controller);
+typedef PencilKitViewCreatedCallback =
+    void Function(PencilKitController controller);
 
 /// PKTool type enum for [PencilKitController.setPKTool]
 enum ToolType {
@@ -41,8 +41,7 @@ enum ToolType {
   eraserBitmap(false, false),
 
   /// fixed width bitmap eraser tool, available from iOS 16.4
-  eraserFixedWidthBitmap(true, false),
-  ;
+  eraserFixedWidthBitmap(true, false);
 
   const ToolType(this.isAvailableFromIos16_4, this.isAvailableFromIos17);
 
@@ -67,6 +66,33 @@ enum PencilKitIos14DrawingPolicy {
   final int value;
 }
 
+/// The user interface style adopted by the PencilKit canvas view.
+///
+/// Maps to iOS `UIUserInterfaceStyle`. This controls how PencilKit
+/// renders ink colors. In dark mode, PencilKit automatically lightens
+/// dark inks (e.g. black becomes grey) for visibility on dark backgrounds.
+/// Setting this to [light] forces light-mode rendering regardless of
+/// system appearance.
+enum UserInterfaceStyle {
+  /// Follow the system appearance setting.
+  unspecified(0),
+
+  /// Force light appearance for the canvas.
+  ///
+  /// Use this when the canvas has a light background (e.g. a coloring
+  /// page with a white image) to prevent PencilKit from auto-adapting
+  /// ink colors for dark mode.
+  light(1),
+
+  /// Force dark appearance for the canvas.
+  dark(2);
+
+  const UserInterfaceStyle(this.value);
+
+  /// The raw integer value matching `UIUserInterfaceStyle`.
+  final int value;
+}
+
 class PencilKit extends StatefulWidget {
   const PencilKit({
     super.key,
@@ -81,6 +107,7 @@ class PencilKit extends StatefulWidget {
     this.drawingPolicy,
     this.isOpaque,
     this.backgroundColor,
+    this.userInterfaceStyle,
     this.toolPickerVisibilityDidChange,
     this.toolPickerIsRulerActiveDidChange,
     this.toolPickerFramesObscuredDidChange,
@@ -136,6 +163,15 @@ class PencilKit extends StatefulWidget {
 
   /// The view's background color. The default is transparent
   final Color? backgroundColor;
+
+  /// The user interface style for the PencilKit canvas view.
+  ///
+  /// Controls how PencilKit renders ink colors. In dark mode, PencilKit
+  /// automatically lightens dark inks for visibility on dark backgrounds.
+  /// Set to [UserInterfaceStyle.light] to prevent this when the canvas has
+  /// a light background (e.g. a coloring page). Defaults to `null`, meaning
+  /// the system appearance is used ([UserInterfaceStyle.unspecified]).
+  final UserInterfaceStyle? userInterfaceStyle;
 
   /// Tells the delegate that the tool picker UI changed visibility.
   final void Function(bool isVisible)? toolPickerVisibilityDidChange;
@@ -219,7 +255,8 @@ class _PencilKitState extends State<PencilKit> {
         color: Colors.red,
         child: const Center(
           child: Text(
-              'You cannot render PencilKit widget. The platform is not iOS or OS version is lower than 13.0.'),
+            'You cannot render PencilKit widget. The platform is not iOS or OS version is lower than 13.0.',
+          ),
         ),
       );
 
@@ -249,41 +286,37 @@ class _PencilKitState extends State<PencilKit> {
 
 class PencilKitController {
   PencilKitController._({required int viewId, required this.widget})
-      : _channel =
-            MethodChannel('plugins.mjstudio/flutter_pencil_kit_$viewId') {
-    _channel.setMethodCallHandler(
-      (MethodCall call) async {
-        switch (call.method) {
-          case 'toolPickerVisibilityDidChange':
-            widget.toolPickerVisibilityDidChange?.call(call.arguments as bool);
-            break;
-          case 'toolPickerIsRulerActiveDidChange':
-            widget.toolPickerIsRulerActiveDidChange
-                ?.call(call.arguments as bool);
-            break;
-          case 'toolPickerFramesObscuredDidChange':
-            widget.toolPickerFramesObscuredDidChange?.call();
-            break;
-          case 'toolPickerSelectedToolDidChange':
-            widget.toolPickerSelectedToolDidChange?.call();
-            break;
-          case 'canvasViewDidBeginUsingTool':
-            widget.canvasViewDidBeginUsingTool?.call();
-            break;
-          case 'canvasViewDrawingDidChange':
-            widget.canvasViewDrawingDidChange?.call();
-            break;
-          case 'canvasViewDidEndUsingTool':
-            widget.canvasViewDidEndUsingTool?.call();
-            break;
-          case 'canvasViewDidFinishRendering':
-            widget.canvasViewDidFinishRendering?.call();
-            break;
-          default:
-            return;
-        }
-      },
-    );
+    : _channel = MethodChannel('plugins.mjstudio/flutter_pencil_kit_$viewId') {
+    _channel.setMethodCallHandler((MethodCall call) async {
+      switch (call.method) {
+        case 'toolPickerVisibilityDidChange':
+          widget.toolPickerVisibilityDidChange?.call(call.arguments as bool);
+          break;
+        case 'toolPickerIsRulerActiveDidChange':
+          widget.toolPickerIsRulerActiveDidChange?.call(call.arguments as bool);
+          break;
+        case 'toolPickerFramesObscuredDidChange':
+          widget.toolPickerFramesObscuredDidChange?.call();
+          break;
+        case 'toolPickerSelectedToolDidChange':
+          widget.toolPickerSelectedToolDidChange?.call();
+          break;
+        case 'canvasViewDidBeginUsingTool':
+          widget.canvasViewDidBeginUsingTool?.call();
+          break;
+        case 'canvasViewDrawingDidChange':
+          widget.canvasViewDrawingDidChange?.call();
+          break;
+        case 'canvasViewDidEndUsingTool':
+          widget.canvasViewDidEndUsingTool?.call();
+          break;
+        case 'canvasViewDidFinishRendering':
+          widget.canvasViewDidFinishRendering?.call();
+          break;
+        default:
+          return;
+      }
+    });
     _applyProperties();
   }
   final MethodChannel _channel;
@@ -304,6 +337,7 @@ class PencilKitController {
       'isOpaque': widget.isOpaque,
       // ignore: deprecated_member_use
       'backgroundColor': widget.backgroundColor?.value,
+      'userInterfaceStyle': widget.userInterfaceStyle?.value,
     });
   }
 
@@ -383,12 +417,15 @@ class PencilKitController {
   ///
   /// Throws an [Error] if failed
   /// ```
-  Future<String> getBase64JpegData(
-      {double scale = 0, double compression = 0.93}) async {
+  Future<String> getBase64JpegData({
+    double scale = 0,
+    double compression = 0.93,
+  }) async {
     return await _channel.invokeMethod('getBase64JpegData', <Object>[
-      scale,
-      compression,
-    ]) as String;
+          scale,
+          compression,
+        ])
+        as String;
   }
 
   /// Load drawing data from base 64 encoded form.
@@ -417,12 +454,14 @@ class PencilKitController {
   /// See also:
   ///
   /// * [ToolType] available tool types
-  Future<void> setPKTool(
-          {required ToolType toolType, double? width, Color? color}) =>
-      _channel.invokeMethod('setPKTool', <String, Object?>{
-        'toolType': toolType.name,
-        'width': width,
-        // ignore: deprecated_member_use
-        'color': color?.value,
-      });
+  Future<void> setPKTool({
+    required ToolType toolType,
+    double? width,
+    Color? color,
+  }) => _channel.invokeMethod('setPKTool', <String, Object?>{
+    'toolType': toolType.name,
+    'width': width,
+    // ignore: deprecated_member_use
+    'color': color?.value,
+  });
 }
