@@ -239,6 +239,7 @@ private class PencilKitView: UIView {
   private let channel: FlutterMethodChannel
   private let canonicalSize: CGSize
   private let backgroundImageView: UIImageView
+  private var toolPickerVisible = false
 
   @available(*, unavailable)
   required init?(coder: NSCoder) {
@@ -270,7 +271,8 @@ private class PencilKitView: UIView {
 
     toolPicker?.addObserver(canvasView)
     toolPicker?.addObserver(self)
-    toolPicker?.setVisible(true, forFirstResponder: canvasView)
+    // Don't call setVisible(true) here — let show()/hide() control visibility.
+    // This prevents the picker from appearing before Dart has a chance to call hide().
   }
 
   override func layoutSubviews() {
@@ -323,11 +325,27 @@ private class PencilKitView: UIView {
   }
 
   func show() {
-    canvasView.becomeFirstResponder()
+    toolPickerVisible = true
+    toolPicker?.setVisible(true, forFirstResponder: canvasView)
+    if !canvasView.becomeFirstResponder() {
+      // View may not be in a window yet (e.g. called from onPlatformViewCreated).
+      // Retry on the next run-loop iteration when the view hierarchy is ready.
+      DispatchQueue.main.async { [weak self] in
+        self?.canvasView.becomeFirstResponder()
+      }
+    }
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    if window != nil, toolPickerVisible {
+      canvasView.becomeFirstResponder()
+    }
   }
 
   func hide() {
-    canvasView.resignFirstResponder()
+    toolPickerVisible = false
+    toolPicker?.setVisible(false, forFirstResponder: canvasView)
   }
 
   func setPKTool(properties: [String: Any]) {
@@ -477,7 +495,7 @@ private class PencilKitView: UIView {
     if let toolPicker {
       toolPicker.removeObserver(old)
       toolPicker.addObserver(new)
-      toolPicker.setVisible(true, forFirstResponder: new)
+      toolPicker.setVisible(toolPickerVisible, forFirstResponder: new)
     }
 
     new.alwaysBounceVertical = old.alwaysBounceVertical
