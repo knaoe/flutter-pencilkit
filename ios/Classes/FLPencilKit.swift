@@ -285,14 +285,6 @@ private class PencilKitView: UIView {
     guard containerSize.width > 0, containerSize.height > 0 else { return }
     let scale = containerSize.width / canonicalSize.width
 
-    backgroundImageView.transform = .identity
-    backgroundImageView.bounds = CGRect(origin: .zero, size: canonicalSize)
-    backgroundImageView.center = CGPoint(
-      x: containerSize.width / 2,
-      y: containerSize.height / 2
-    )
-    backgroundImageView.transform = CGAffineTransform(scaleX: scale, y: scale)
-
     canvasView.transform = .identity
     canvasView.bounds = CGRect(origin: .zero, size: canonicalSize)
     canvasView.center = CGPoint(
@@ -300,6 +292,27 @@ private class PencilKitView: UIView {
       y: containerSize.height / 2
     )
     canvasView.transform = CGAffineTransform(scaleX: scale, y: scale)
+
+    syncBackgroundToCanvas()
+  }
+
+  /// Keep the background image in sync with the canvas zoom & scroll.
+  private func syncBackgroundToCanvas() {
+    let containerSize = bounds.size
+    guard containerSize.width > 0, containerSize.height > 0 else { return }
+
+    let baseScale = containerSize.width / canonicalSize.width
+    let zoom = canvasView.zoomScale
+    let offset = canvasView.contentOffset
+    let totalScale = baseScale * zoom
+
+    backgroundImageView.transform = .identity
+    backgroundImageView.bounds = CGRect(origin: .zero, size: canonicalSize)
+    backgroundImageView.transform = CGAffineTransform(scaleX: totalScale, y: totalScale)
+    backgroundImageView.center = CGPoint(
+      x: (canonicalSize.width / 2 * zoom - offset.x) * baseScale,
+      y: (canonicalSize.height / 2 * zoom - offset.y) * baseScale
+    )
   }
 
   private func addAndPositionCanvasView() {
@@ -521,6 +534,14 @@ private class PencilKitView: UIView {
 
 @available(iOS 13.0, *)
 extension PencilKitView: PKCanvasViewDelegate {
+  func scrollViewDidZoom(_ scrollView: UIScrollView) {
+    syncBackgroundToCanvas()
+  }
+
+  func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    syncBackgroundToCanvas()
+  }
+
   func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
     channel.invokeMethod("canvasViewDidBeginUsingTool", arguments: nil)
   }
