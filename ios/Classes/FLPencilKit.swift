@@ -204,11 +204,11 @@ private func createCanvasView(delegate: PKCanvasViewDelegate) -> PKCanvasView {
   v.delegate = delegate
   v.alwaysBounceVertical = false
   v.alwaysBounceHorizontal = false
-  v.isScrollEnabled = false
+  v.isScrollEnabled = true
   v.showsVerticalScrollIndicator = false
   v.showsHorizontalScrollIndicator = false
   v.minimumZoomScale = 1.0
-  v.maximumZoomScale = 1.0
+  v.maximumZoomScale = 4.0
   v.contentInsetAdjustmentBehavior = .never
   if #unavailable(iOS 14.0) {
     v.allowsFingerDrawing = true
