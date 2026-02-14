@@ -197,6 +197,8 @@ class FLPencilKit: NSObject, FlutterPlatformView {
   }
 }
 
+// MARK: - Canvas factory (no zoom — zoom is handled by the wrapper scroll view)
+
 @available(iOS 13.0, *)
 private func createCanvasView(delegate: PKCanvasViewDelegate) -> PKCanvasView {
   let v = PKCanvasView()
@@ -204,11 +206,11 @@ private func createCanvasView(delegate: PKCanvasViewDelegate) -> PKCanvasView {
   v.delegate = delegate
   v.alwaysBounceVertical = false
   v.alwaysBounceHorizontal = false
-  v.isScrollEnabled = true
+  v.isScrollEnabled = false
   v.showsVerticalScrollIndicator = false
   v.showsHorizontalScrollIndicator = false
   v.minimumZoomScale = 1.0
-  v.maximumZoomScale = 4.0
+  v.maximumZoomScale = 1.0
   v.contentInsetAdjustmentBehavior = .never
   if #unavailable(iOS 14.0) {
     v.allowsFingerDrawing = true
@@ -217,6 +219,19 @@ private func createCanvasView(delegate: PKCanvasViewDelegate) -> PKCanvasView {
   v.isOpaque = false
   return v
 }
+
+// MARK: - PencilKitView
+//
+// View hierarchy:
+//   PencilKitView (self)
+//     └─ zoomScrollView  (handles pinch-to-zoom & two-finger pan)
+//          └─ zoomContentView  (viewForZooming — scales as a unit)
+//               ├─ backgroundImageView
+//               └─ canvasView  (PKCanvasView, no transform, no zoom)
+//
+// By keeping the external CGAffineTransform OFF the PKCanvasView and
+// delegating zoom to a plain UIScrollView whose bounds == visual size,
+// the zoom center is always correct (finger-centric).
 
 @available(iOS 13.0, *)
 private class PencilKitView: UIView {
@@ -239,6 +254,8 @@ private class PencilKitView: UIView {
   private let channel: FlutterMethodChannel
   private let canonicalSize: CGSize
   private let backgroundImageView: UIImageView
+  private let zoomScrollView = UIScrollView()
+  private let zoomContentView = UIView()
   private var toolPickerVisible = false
 
   @available(*, unavailable)
@@ -266,64 +283,77 @@ private class PencilKitView: UIView {
 
     super.init(frame: frame)
 
-    addSubview(backgroundImageView)
-    addAndPositionCanvasView()
+    // -- Zoom scroll view (handles pinch-to-zoom) --
+    zoomScrollView.showsVerticalScrollIndicator = false
+    zoomScrollView.showsHorizontalScrollIndicator = false
+    zoomScrollView.contentInsetAdjustmentBehavior = .never
+    zoomScrollView.delaysContentTouches = false
+    // Two-finger pan only so single-finger drawing is unaffected.
+    zoomScrollView.panGestureRecognizer.minimumNumberOfTouches = 2
+    zoomScrollView.delegate = self
+
+    // -- Zoomable content (background + canvas at canonical size) --
+    let contentFrame = CGRect(origin: .zero, size: canonicalSize)
+    zoomContentView.frame = contentFrame
+    backgroundImageView.frame = contentFrame
+    canvasView.frame = contentFrame
+
+    zoomContentView.addSubview(backgroundImageView)
+    zoomContentView.addSubview(canvasView)
+    zoomScrollView.addSubview(zoomContentView)
+    zoomScrollView.contentSize = canonicalSize
+    addSubview(zoomScrollView)
 
     toolPicker?.addObserver(canvasView)
     toolPicker?.addObserver(self)
-    // Don't call setVisible(true) here — let show()/hide() control visibility.
-    // This prevents the picker from appearing before Dart has a chance to call hide().
   }
+
+  // MARK: Layout
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    applyTransforms()
-  }
-
-  private func applyTransforms() {
-    let containerSize = bounds.size
-    guard containerSize.width > 0, containerSize.height > 0 else { return }
-    let scale = containerSize.width / canonicalSize.width
-
-    canvasView.transform = .identity
-    canvasView.bounds = CGRect(origin: .zero, size: canonicalSize)
-    canvasView.center = CGPoint(
-      x: containerSize.width / 2,
-      y: containerSize.height / 2
-    )
-    canvasView.transform = CGAffineTransform(scaleX: scale, y: scale)
-
-    syncBackgroundToCanvas()
-  }
-
-  /// Keep the background image in sync with the canvas zoom & scroll.
-  private func syncBackgroundToCanvas() {
     let containerSize = bounds.size
     guard containerSize.width > 0, containerSize.height > 0 else { return }
 
-    let baseScale = containerSize.width / canonicalSize.width
-    let zoom = canvasView.zoomScale
-    let offset = canvasView.contentOffset
-    let totalScale = baseScale * zoom
+    zoomScrollView.frame = bounds
 
-    backgroundImageView.transform = .identity
-    backgroundImageView.bounds = CGRect(origin: .zero, size: canonicalSize)
-    backgroundImageView.transform = CGAffineTransform(scaleX: totalScale, y: totalScale)
-    backgroundImageView.center = CGPoint(
-      x: (canonicalSize.width / 2 * zoom - offset.x) * baseScale,
-      y: (canonicalSize.height / 2 * zoom - offset.y) * baseScale
-    )
+    let fitScale = containerSize.width / canonicalSize.width
+    zoomScrollView.minimumZoomScale = fitScale
+    zoomScrollView.maximumZoomScale = fitScale * 4.0
+
+    // On first layout (or if somehow below fit), snap to fit.
+    if zoomScrollView.zoomScale < fitScale {
+      zoomScrollView.zoomScale = fitScale
+    }
+
+    centerZoomContent()
+  }
+
+  /// Center the content view when it is smaller than the scroll viewport
+  /// (i.e. at minimum zoom the content may not fill the scroll view).
+  private func centerZoomContent() {
+    let boundsSize = zoomScrollView.bounds.size
+    let contentSize = zoomScrollView.contentSize
+
+    let xOffset = max(0, (boundsSize.width - contentSize.width) / 2)
+    let yOffset = max(0, (boundsSize.height - contentSize.height) / 2)
+
+    zoomContentView.frame.origin = CGPoint(x: xOffset, y: yOffset)
   }
 
   private func addAndPositionCanvasView() {
-    addSubview(canvasView)
-    applyTransforms()
+    canvasView.frame = CGRect(origin: .zero, size: canonicalSize)
+    zoomContentView.addSubview(canvasView)
   }
+
+  // MARK: Lifecycle
 
   deinit {
     toolPicker?.removeObserver(canvasView)
     toolPicker?.removeObserver(self)
   }
+
+  // MARK: Drawing actions
 
   func clear() {
     canvasView.drawing = PKDrawing()
@@ -337,12 +367,12 @@ private class PencilKitView: UIView {
     canvasView.undoManager?.redo()
   }
 
+  // MARK: Tool picker
+
   func show() {
     toolPickerVisible = true
     toolPicker?.setVisible(true, forFirstResponder: canvasView)
     if !canvasView.becomeFirstResponder() {
-      // View may not be in a window yet (e.g. called from onPlatformViewCreated).
-      // Retry on the next run-loop iteration when the view hierarchy is ready.
       DispatchQueue.main.async { [weak self] in
         self?.canvasView.becomeFirstResponder()
       }
@@ -361,20 +391,18 @@ private class PencilKitView: UIView {
     toolPicker?.setVisible(false, forFirstResponder: canvasView)
   }
 
+  // MARK: PKTool
+
   func setPKTool(properties: [String: Any]) {
-    // toolType
     let inputToolType = properties["toolType"] as! String
-    // width
     var width: CGFloat?
     if let _width = properties["width"] as? Double {
       width = CGFloat(truncating: NSNumber(value: _width))
     }
-    // color
     var color = UIColor.black
     if let _color = properties["color"] as? Int {
       color = UIColor(hex: _color)
     }
-    // set PKTool based on input PKToolType
     switch inputToolType {
     case "pen":
       canvasView.tool = PKInkingTool(.pen, color: color, width: width)
@@ -423,6 +451,8 @@ private class PencilKitView: UIView {
     }
     toolPicker?.selectedTool = canvasView.tool
   }
+
+  // MARK: Persistence
 
   func save(url: URL, withBase64Data: Bool) throws -> String? {
     let data = canvasView.drawing.dataRepresentation()
@@ -482,6 +512,8 @@ private class PencilKitView: UIView {
     addAndPositionCanvasView()
   }
 
+  // MARK: Properties
+
   func applyProperties(properties: [String: Any?]) {
     if let alwaysBounceVertical = properties["alwaysBounceVertical"] as? Bool {
       canvasView.alwaysBounceVertical = alwaysBounceVertical
@@ -532,16 +564,25 @@ private class PencilKitView: UIView {
   }
 }
 
+// MARK: - UIScrollViewDelegate (zoom wrapper) + PKCanvasViewDelegate
+
 @available(iOS 13.0, *)
 extension PencilKitView: PKCanvasViewDelegate {
+  // Called for zoomScrollView (canvasView has zoom disabled).
+  func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+    if scrollView === zoomScrollView {
+      return zoomContentView
+    }
+    return nil
+  }
+
   func scrollViewDidZoom(_ scrollView: UIScrollView) {
-    syncBackgroundToCanvas()
+    if scrollView === zoomScrollView {
+      centerZoomContent()
+    }
   }
 
-  func scrollViewDidScroll(_ scrollView: UIScrollView) {
-    syncBackgroundToCanvas()
-  }
-
+  // PKCanvasView delegate callbacks
   func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
     channel.invokeMethod("canvasViewDidBeginUsingTool", arguments: nil)
   }
