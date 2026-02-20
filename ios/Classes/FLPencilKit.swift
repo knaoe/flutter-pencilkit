@@ -109,6 +109,9 @@ class FLPencilKit: NSObject, FlutterPlatformView {
       case "applyProperties":
         pencilKitView.applyProperties(properties: call.arguments as! [String: Any?])
         result(nil)
+      case "resetZoom":
+        pencilKitView.resetZoom()
+        result(nil)
       default:
         break
       }
@@ -292,6 +295,19 @@ private class PencilKitView: UIView {
     zoomScrollView.panGestureRecognizer.minimumNumberOfTouches = 2
     zoomScrollView.delegate = self
 
+    // Allow pinch gesture to work simultaneously with PKCanvasView drawing.
+    if let pinchGR = zoomScrollView.pinchGestureRecognizer {
+      pinchGR.delegate = self
+    }
+
+    // Double-tap to toggle between fit and 2× zoom.
+    let doubleTap = UITapGestureRecognizer(
+      target: self,
+      action: #selector(handleDoubleTap(_:))
+    )
+    doubleTap.numberOfTapsRequired = 2
+    zoomScrollView.addGestureRecognizer(doubleTap)
+
     // -- Zoomable content (background + canvas at canonical size) --
     let contentFrame = CGRect(origin: .zero, size: canonicalSize)
     zoomContentView.frame = contentFrame
@@ -344,6 +360,35 @@ private class PencilKitView: UIView {
   private func addAndPositionCanvasView() {
     canvasView.frame = CGRect(origin: .zero, size: canonicalSize)
     zoomContentView.addSubview(canvasView)
+  }
+
+  // MARK: Zoom actions
+
+  func resetZoom() {
+    UIView.animate(withDuration: 0.3) {
+      self.zoomScrollView.zoomScale = self.zoomScrollView.minimumZoomScale
+    }
+  }
+
+  @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+    let minScale = zoomScrollView.minimumZoomScale
+    if zoomScrollView.zoomScale > minScale * 1.1 {
+      // Currently zoomed in — reset to fit.
+      zoomScrollView.setZoomScale(minScale, animated: true)
+    } else {
+      // At fit — zoom to 2× centered on tap point.
+      let center = gesture.location(in: zoomContentView)
+      let targetScale = min(minScale * 2.0, zoomScrollView.maximumZoomScale)
+      let size = CGSize(
+        width: zoomScrollView.bounds.width / targetScale,
+        height: zoomScrollView.bounds.height / targetScale
+      )
+      let origin = CGPoint(
+        x: center.x - size.width / 2,
+        y: center.y - size.height / 2
+      )
+      zoomScrollView.zoom(to: CGRect(origin: origin, size: size), animated: true)
+    }
   }
 
   // MARK: Lifecycle
@@ -582,6 +627,25 @@ extension PencilKitView: PKCanvasViewDelegate {
     }
   }
 
+  func scrollViewWillBeginZooming(
+    _ scrollView: UIScrollView,
+    with view: UIView?
+  ) {
+    guard scrollView === zoomScrollView else { return }
+    // Disable finger drawing during pinch to prevent phantom strokes.
+    canvasView.drawingGestureRecognizer.isEnabled = false
+  }
+
+  func scrollViewDidEndZooming(
+    _ scrollView: UIScrollView,
+    with view: UIView?,
+    atScale scale: CGFloat
+  ) {
+    guard scrollView === zoomScrollView else { return }
+    canvasView.drawingGestureRecognizer.isEnabled = true
+    centerZoomContent()
+  }
+
   // PKCanvasView delegate callbacks
   func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
     channel.invokeMethod("canvasViewDidBeginUsingTool", arguments: nil)
@@ -616,6 +680,20 @@ extension PencilKitView: PKToolPickerObserver {
 
   func toolPickerSelectedToolDidChange(_ toolPicker: PKToolPicker) {
     channel.invokeMethod("toolPickerSelectedToolDidChange", arguments: nil)
+  }
+}
+
+// MARK: - UIGestureRecognizerDelegate (allow pinch alongside PKCanvasView drawing)
+
+@available(iOS 13.0, *)
+extension PencilKitView: UIGestureRecognizerDelegate {
+  func gestureRecognizer(
+    _ gestureRecognizer: UIGestureRecognizer,
+    shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+  ) -> Bool {
+    // Only allow simultaneous recognition for the zoom scroll view's pinch gesture.
+    return gestureRecognizer === zoomScrollView.pinchGestureRecognizer
+      || otherGestureRecognizer === zoomScrollView.pinchGestureRecognizer
   }
 }
 

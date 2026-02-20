@@ -444,6 +444,9 @@ class PencilKitController {
   Future<void> loadBase64Data(String base64Data) =>
       _channel.invokeMethod('loadBase64Data', base64Data);
 
+  /// Reset zoom to fit the canvas in the viewport (animated).
+  Future<void> resetZoom() => _channel.invokeMethod('resetZoom');
+
   /// Set PKTool toolType, width, and color
   ///
   /// This method can fail if tool type is not supported by device iOS version
